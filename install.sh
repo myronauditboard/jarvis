@@ -1,8 +1,8 @@
 #!/bin/bash
 # install.sh
 #
-# Jarvis setup wizard. Run once after cloning to configure GitHub Secrets
-# and validate your environment.
+# Jarvis setup wizard. Run once after cloning to configure credentials
+# and get jarvis start working immediately.
 #
 # Usage: ./install.sh
 
@@ -10,6 +10,7 @@ set -euo pipefail
 
 JARVIS_DIR="$(cd "$(dirname "$0")" && pwd)"
 PARENT_DIR="$(dirname "$JARVIS_DIR")"
+JARVISRC="$HOME/.jarvisrc"
 
 echo ""
 echo "╔══════════════════════════════════════╗"
@@ -56,116 +57,46 @@ done
 echo ""
 
 # =============================================================================
-# Step 3: GitHub repo
+# Step 3: Jira credentials → saved to ~/.jarvisrc (enables jarvis start)
 # =============================================================================
-echo "── GitHub repo ─────────────────────────"
-read -r -p "GitHub repo for Jarvis [myronauditboard/jarvis]: " GH_REPO
-GH_REPO="${GH_REPO:-myronauditboard/jarvis}"
+echo "── Jira credentials ────────────────────"
+echo "  These are required for 'jarvis start' and will be saved to $JARVISRC."
 echo ""
 
-# =============================================================================
-# Step 4: GitHub Secrets
-# =============================================================================
-echo "── GitHub Secrets ──────────────────────"
-echo "We'll store your credentials as encrypted GitHub Secrets."
-echo "They are never written to disk or shown in logs."
+read -r -p "  JIRA_URL (e.g. https://yourcompany.atlassian.net): " JIRA_URL
+read -r -p "  JIRA_EMAIL (e.g. you@yourcompany.com): " JIRA_EMAIL
+read -r -s -p "  JIRA_API_TOKEN (hidden — generate at id.atlassian.net): " JIRA_API_TOKEN
+echo ""
 echo ""
 
-set_secret() {
-  local name="$1"
-  local description="$2"
-  local hint="$3"
-  local sensitive="${4:-true}"
-
-  echo "  $name"
-  echo "  $description"
-  echo "  ($hint)"
-
-  if [ "$sensitive" = "true" ]; then
-    read -r -s -p "  Value (hidden): " VALUE
-    echo ""
-  else
-    read -r -p "  Value: " VALUE
-  fi
-
-  gh secret set "$name" --body "$VALUE" --repo "$GH_REPO"
-  echo "  ✓ $name saved"
-  echo ""
-}
-
-set_secret "JIRA_URL" \
-  "Your Jira base URL" \
-  "e.g. https://yourcompany.atlassian.net" \
-  "false"
-
-set_secret "JIRA_EMAIL" \
-  "The email address of your Jira account" \
-  "e.g. you@yourcompany.com" \
-  "false"
-
-set_secret "JIRA_API_TOKEN" \
-  "Your Jira API token" \
-  "Generate at: https://id.atlassian.net/manage-profile/security/api-tokens" \
-  "true"
-
-set_secret "SLACK_BOT_TOKEN" \
-  "Your Slack bot token (xoxb-...) — leave blank to skip, email will be used instead" \
-  "See docs/slack-app-setup.md for how to create one" \
-  "true"
-
-set_secret "SLACK_USER_ID" \
-  "Your Slack user ID — Jarvis will DM this user" \
-  "Find it in Slack: click your profile → ··· menu → Copy member ID" \
-  "false"
-
-echo "── Email fallback (used when Slack is unavailable) ─"
-echo "  See docs/email-notifications-setup.md for setup details."
-echo ""
-
-set_secret "SMTP_SERVER" \
-  "SMTP server hostname" \
-  "e.g. smtp.gmail.com" \
-  "false"
-
-set_secret "SMTP_USERNAME" \
-  "SMTP username / sender email address" \
-  "e.g. you@gmail.com" \
-  "false"
-
-set_secret "SMTP_PASSWORD" \
-  "SMTP password or app password" \
-  "For Gmail: generate at https://myaccount.google.com/apppasswords" \
-  "true"
-
-set_secret "NOTIFY_EMAIL" \
-  "Email address to deliver Jarvis notifications to" \
-  "e.g. you@yourcompany.com" \
-  "false"
-
-# =============================================================================
-# Step 5: Validate Jira connectivity
-# =============================================================================
-echo "── Validating Jira connectivity ────────"
-
-read -r -p "  Re-enter JIRA_URL to test connectivity: " TEST_JIRA_URL
-read -r -p "  Re-enter JIRA_EMAIL: " TEST_EMAIL
-read -r -s -p "  Re-enter JIRA_API_TOKEN (hidden): " TEST_TOKEN
-echo ""
-
+# Validate Jira connectivity
+echo -n "  Testing Jira connectivity... "
 HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-  -u "$TEST_EMAIL:$TEST_TOKEN" \
-  "$TEST_JIRA_URL/rest/api/3/myself")
+  -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
+  "$JIRA_URL/rest/api/3/myself")
 
 if [ "$HTTP_CODE" = "200" ]; then
-  echo "  ✓ Jira connection successful"
+  echo "✓ Connected"
 else
-  echo "  ✗ Jira connection failed (HTTP $HTTP_CODE)"
-  echo "    Check your JIRA_URL, JIRA_EMAIL, and JIRA_API_TOKEN."
+  echo "✗ Failed (HTTP $HTTP_CODE)"
+  echo "  Check your JIRA_URL, JIRA_EMAIL, and JIRA_API_TOKEN and re-run."
+  exit 1
 fi
 echo ""
 
+# Save to ~/.jarvisrc
+cat > "$JARVISRC" <<EOF
+# Jarvis credentials — sourced by bin/jarvis at runtime
+export JIRA_URL="$JIRA_URL"
+export JIRA_EMAIL="$JIRA_EMAIL"
+export JIRA_API_TOKEN="$JIRA_API_TOKEN"
+EOF
+chmod 600 "$JARVISRC"
+echo "  ✓ Credentials saved to $JARVISRC (mode 600)"
+echo ""
+
 # =============================================================================
-# Step 6: Add jarvis to PATH
+# Step 4: Add jarvis to PATH
 # =============================================================================
 echo "── Adding jarvis to PATH ───────────────"
 
@@ -195,27 +126,79 @@ fi
 echo ""
 
 # =============================================================================
+# Step 5: GitHub Secrets (optional — needed for cloud notifications)
+# =============================================================================
+echo "── GitHub Secrets (optional) ───────────"
+echo "  GitHub Secrets power the cloud notification workflow."
+echo "  Skip any secret by pressing Enter — you can set them later."
+echo ""
+
+read -r -p "  GitHub repo for Jarvis [myronauditboard/jarvis]: " GH_REPO
+GH_REPO="${GH_REPO:-myronauditboard/jarvis}"
+echo ""
+
+# Upload a secret only if a value was provided
+set_secret_optional() {
+  local name="$1"
+  local description="$2"
+  local hint="$3"
+  local sensitive="${4:-true}"
+
+  echo "  $name — $description"
+  echo "  ($hint)"
+
+  local value=""
+  if [ "$sensitive" = "true" ]; then
+    read -r -s -p "  Value (hidden, Enter to skip): " value
+    echo ""
+  else
+    read -r -p "  Value (Enter to skip): " value
+  fi
+
+  if [[ -z "$value" ]]; then
+    echo "  — skipped"
+  else
+    gh secret set "$name" --body "$value" --repo "$GH_REPO"
+    echo "  ✓ $name saved"
+  fi
+  echo ""
+}
+
+# Upload Jira secrets to GitHub (so the cloud workflow can validate tickets)
+echo "  Uploading Jira credentials to GitHub Secrets..."
+gh secret set "JIRA_URL"       --body "$JIRA_URL"       --repo "$GH_REPO" 2>/dev/null && echo "  ✓ JIRA_URL"       || echo "  ⚠ JIRA_URL upload failed (you can set it manually)"
+gh secret set "JIRA_EMAIL"     --body "$JIRA_EMAIL"     --repo "$GH_REPO" 2>/dev/null && echo "  ✓ JIRA_EMAIL"     || echo "  ⚠ JIRA_EMAIL upload failed"
+gh secret set "JIRA_API_TOKEN" --body "$JIRA_API_TOKEN" --repo "$GH_REPO" 2>/dev/null && echo "  ✓ JIRA_API_TOKEN" || echo "  ⚠ JIRA_API_TOKEN upload failed"
+echo ""
+
+set_secret_optional "SLACK_BOT_TOKEN" \
+  "Slack bot token for DM notifications" \
+  "See docs/slack-app-setup.md — skip if not set up yet" \
+  "true"
+
+set_secret_optional "SLACK_USER_ID" \
+  "Your Slack member ID" \
+  "Slack → your profile → ··· → Copy member ID" \
+  "false"
+
+echo "  ── Email fallback ──"
+set_secret_optional "SMTP_SERVER"   "SMTP hostname"          "e.g. smtp.gmail.com"    "false"
+set_secret_optional "SMTP_USERNAME" "SMTP sender address"    "e.g. you@gmail.com"     "false"
+set_secret_optional "SMTP_PASSWORD" "SMTP app password"      "See docs/email-notifications-setup.md" "true"
+set_secret_optional "NOTIFY_EMAIL"  "Notification recipient" "e.g. you@yourcompany.com" "false"
+
+# =============================================================================
 # Done
 # =============================================================================
 echo "╔══════════════════════════════════════╗"
 echo "║         Setup Complete!              ║"
 echo "╚══════════════════════════════════════╝"
 echo ""
-echo "Next steps:"
-echo "  1. Set up your Slack app (if you haven't):"
-echo "     $JARVIS_DIR/docs/slack-app-setup.md"
+echo "  'jarvis start' is ready to use now."
 echo ""
-echo "  2. Configure your Jira Automation rule:"
-echo "     $JARVIS_DIR/docs/jira-automation-setup.md"
+echo "  Cloud notifications (Slack/email) need the Jira Automation rule:"
+echo "  See: $JARVIS_DIR/docs/jira-automation-setup.md"
 echo ""
-echo "  3. Test the workflow end-to-end:"
-echo "     gh api repos/$GH_REPO/dispatches \\"
-echo "       -f event_type=jira-ticket-assigned \\"
-echo "       -f client_payload[ticket_key]=TEST-1 \\"
-echo "       -f client_payload[summary]=\"Test ticket\" \\"
-echo "       -f client_payload[ticket_url]=\"https://example.atlassian.net/browse/TEST-1\" \\"
-echo "       -f client_payload[assignee_email]=\"you@yourcompany.com\" \\"
-echo "       -f client_payload[status]=\"To Do\""
-echo ""
-echo "  Then watch the run at: https://github.com/$GH_REPO/actions"
+echo "  Test the notification pipeline anytime:"
+echo "  ./scripts/test.sh"
 echo ""
