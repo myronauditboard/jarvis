@@ -1,0 +1,50 @@
+name: Jira Ticket Assigned
+
+on:
+  repository_dispatch:
+    types: [jira-ticket-assigned]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log incoming payload
+        run: |
+          echo "Ticket:   ${{ github.event.client_payload.ticket_key }}"
+          echo "Summary:  ${{ github.event.client_payload.summary }}"
+          echo "Status:   ${{ github.event.client_payload.status }}"
+          echo "Assignee: ${{ github.event.client_payload.assignee_email }}"
+
+      - name: Validate ticket via Jira API
+        id: validate
+        run: |
+          TICKET_KEY="${{ github.event.client_payload.ticket_key }}"
+          JQL="key = \"${TICKET_KEY}\" AND assignee = \"${{ secrets.JIRA_EMAIL }}\" AND status = \"To Do\""
+
+          RESPONSE=$(curl -s \
+            -u "${{ secrets.JIRA_EMAIL }}:${{ secrets.JIRA_API_TOKEN }}" \
+            -G "${{ secrets.JIRA_URL }}/rest/api/3/search/jql" \
+            --data-urlencode "jql=${JQL}" \
+            --data-urlencode "fields=key,summary" \
+            --data-urlencode "maxResults=1")
+
+          COUNT=$(echo "$RESPONSE" | jq '.issues | length')
+          echo "count=${COUNT}" >> "$GITHUB_OUTPUT"
+
+          if [ "$COUNT" -eq 0 ]; then
+            echo "Ticket ${TICKET_KEY} is not assigned to ${{ secrets.JIRA_EMAIL }} in To Do status. Skipping."
+          else
+            echo "Ticket ${TICKET_KEY} validated. Proceeding with notification."
+          fi
+
+      - name: Send Slack DM
+        if: steps.validate.outputs.count != '0'
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          TICKET_KEY: ${{ github.event.client_payload.ticket_key }}
+          TICKET_SUMMARY: ${{ github.event.client_payload.summary }}
+          TICKET_URL: ${{ github.event.client_payload.ticket_url }}
+        run: bash scripts/notify-slack.sh
