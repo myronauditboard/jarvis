@@ -1,0 +1,8 @@
+# Plans are working documents — not committed
+plans/
+
+# Logs
+logs/
+
+# Local config
+.jarvisrc

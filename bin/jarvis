@@ -1,0 +1,283 @@
+#!/bin/bash
+# jarvis — local CLI for the Jarvis automation system
+#
+# Usage:
+#   jarvis start <TICKET_KEY>   Look up ticket, determine repos, orchestrate implementation
+#
+# Requirements:
+#   - claude CLI in PATH (Claude Code)
+#   - gh CLI in PATH (GitHub CLI, authenticated)
+#   - jq in PATH
+#   - JIRA_URL, JIRA_EMAIL, JIRA_API_TOKEN set in environment or ~/.jarvisrc
+#   - auditboard-backend and auditboard-frontend as siblings of this repo
+
+set -euo pipefail
+
+JARVIS_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+PARENT_DIR="$(dirname "$JARVIS_DIR")"
+BACKEND_REPO="$PARENT_DIR/auditboard-backend"
+FRONTEND_REPO="$PARENT_DIR/auditboard-frontend"
+PLANS_DIR="$JARVIS_DIR/plans"
+LOG_DIR="$JARVIS_DIR/logs"
+
+BACKEND_INDICATORS="$BACKEND_REPO/.claude/rules/satl-indicators-backend-rule-u-myronauditboard.md"
+FRONTEND_INDICATORS="$FRONTEND_REPO/.claude/rules/satl-indicators-frontend-rule-u-myronauditboard.md"
+COMMAND_FILE="satl-start-jira-work-command-u-myronauditboard"
+
+# Load credentials from ~/.jarvisrc if present
+[[ -f "$HOME/.jarvisrc" ]] && source "$HOME/.jarvisrc"
+
+# Validate required env vars
+: "${JIRA_URL:?Set JIRA_URL in your environment or ~/.jarvisrc}"
+: "${JIRA_EMAIL:?Set JIRA_EMAIL in your environment or ~/.jarvisrc}"
+: "${JIRA_API_TOKEN:?Set JIRA_API_TOKEN in your environment or ~/.jarvisrc}"
+
+log()  { echo "[jarvis] $1"; }
+warn() { echo "[jarvis] WARNING: $1" >&2; }
+die()  { echo "[jarvis] ERROR: $1" >&2; exit 1; }
+
+# =============================================================================
+# jarvis start <TICKET_KEY>
+# =============================================================================
+cmd_start() {
+  local ticket_key="${1:?Usage: jarvis start <TICKET_KEY>}"
+  mkdir -p "$PLANS_DIR" "$LOG_DIR"
+
+  # ── Step 1: Fetch ticket from Jira ──────────────────────────────────────────
+  log "Fetching $ticket_key from Jira..."
+
+  local jira_response
+  jira_response=$(curl -s \
+    -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
+    "$JIRA_URL/rest/api/3/issue/$ticket_key?fields=summary,description,status,assignee,priority")
+
+  local ticket_title
+  ticket_title=$(echo "$jira_response" | jq -r '.fields.summary // empty')
+  [[ -z "$ticket_title" ]] && die "Could not fetch $ticket_key. Check your Jira credentials and ticket ID."
+
+  local ticket_status
+  ticket_status=$(echo "$jira_response" | jq -r '.fields.status.name // "Unknown"')
+
+  # Jira description is in Atlassian Document Format (ADF) — extract plain text
+  local ticket_description
+  ticket_description=$(echo "$jira_response" | \
+    jq -r '[.fields.description.content[]?.content[]?.text // empty] | join(" ")' 2>/dev/null || echo "")
+
+  local ticket_url="$JIRA_URL/browse/$ticket_key"
+
+  log "  Title:  $ticket_title"
+  log "  Status: $ticket_status"
+  log "  URL:    $ticket_url"
+  echo ""
+
+  # ── Step 2: Read indicator files ─────────────────────────────────────────────
+  local backend_indicators=""
+  local frontend_indicators=""
+
+  if [[ -f "$BACKEND_INDICATORS" ]]; then
+    backend_indicators=$(cat "$BACKEND_INDICATORS")
+  else
+    warn "Backend indicators not found at $BACKEND_INDICATORS"
+  fi
+
+  if [[ -f "$FRONTEND_INDICATORS" ]]; then
+    frontend_indicators=$(cat "$FRONTEND_INDICATORS")
+  else
+    warn "Frontend indicators not found at $FRONTEND_INDICATORS"
+  fi
+
+  # ── Step 3: Determine which repos need work ───────────────────────────────────
+  log "Determining which repos need changes..."
+
+  local decision_prompt
+  decision_prompt=$(cat <<PROMPT
+You are deciding which repositories need code changes for a Jira ticket.
+
+## Ticket
+Key: $ticket_key
+Title: $ticket_title
+Description: $ticket_description
+
+## Backend Indicators
+$backend_indicators
+
+## Frontend Indicators
+$frontend_indicators
+
+Based on the ticket title and description, and using the indicator rules above,
+determine which repos need changes.
+
+Respond with EXACTLY one of these three values and nothing else:
+backend-only
+frontend-only
+both
+PROMPT
+)
+
+  local decision
+  decision=$(claude -p "$decision_prompt" 2>/dev/null | \
+    grep -oE 'backend-only|frontend-only|both' | tail -1 || echo "")
+
+  if [[ -z "$decision" ]]; then
+    warn "Could not determine repos from ticket analysis. Defaulting to 'both'."
+    decision="both"
+  fi
+
+  log "Decision: $decision"
+  echo ""
+
+  # ── Step 4: Cross-repo orchestration plan (when both repos need changes) ──────
+  local plan_file="$PLANS_DIR/plan-$ticket_key.md"
+
+  if [[ "$decision" == "both" ]]; then
+    log "Cross-repo work detected. Creating orchestration plan..."
+
+    local plan_prompt
+    plan_prompt=$(cat <<PROMPT
+You are creating a cross-repo implementation plan for a Jira ticket that requires
+changes in both the backend (Node.js/TypeScript) and frontend (Vue.js) repositories.
+
+## Ticket
+Key: $ticket_key
+Title: $ticket_title
+Description: $ticket_description
+
+Create a concise implementation plan covering:
+1. **API Contract** — what endpoints/changes the backend will expose
+   (include HTTP method, path, request body shape, response shape)
+2. **Frontend Integration** — what the frontend will call and how it will use the data
+3. **Shared types or constants** (if any)
+
+Format as markdown. This plan will be given to both agents so they implement
+compatible, coordinated changes.
+PROMPT
+)
+
+    claude -p "$plan_prompt" > "$plan_file" 2>/dev/null
+    log "Plan saved to $plan_file"
+    echo ""
+  fi
+
+  # ── Step 5: Run agents ────────────────────────────────────────────────────────
+  run_backend() {
+    log "Starting backend agent for $ticket_key..."
+    local ts
+    ts=$(date +"%Y%m%d_%H%M%S")
+    local log_file="$LOG_DIR/${ts}_${ticket_key}_backend.log"
+
+    local prompt="/$COMMAND_FILE $ticket_key"
+
+    if [[ -f "$plan_file" ]]; then
+      prompt="$prompt
+
+## Cross-Repo Orchestration Plan
+The frontend will implement the counterpart to your changes.
+Implement the backend side according to this plan:
+
+$(cat "$plan_file")"
+    fi
+
+    (cd "$BACKEND_REPO" && env \
+      TICKET_TITLE="$ticket_title" \
+      TICKET_DESCRIPTION="$ticket_description" \
+      JIRA_BASE_URL="$JIRA_URL" \
+      JIRA_EMAIL="$JIRA_EMAIL" \
+      JIRA_API_TOKEN="$JIRA_API_TOKEN" \
+      REPO_NEEDED="true" \
+      claude -p "$prompt" 2>&1 | tee "$log_file")
+
+    log "Backend agent complete. Log: $log_file"
+  }
+
+  run_frontend() {
+    log "Starting frontend agent for $ticket_key..."
+    local ts
+    ts=$(date +"%Y%m%d_%H%M%S")
+    local log_file="$LOG_DIR/${ts}_${ticket_key}_frontend.log"
+
+    local prompt="/$COMMAND_FILE $ticket_key"
+
+    # Build context: plan + backend PR URL (if backend just ran)
+    local cross_repo_context=""
+
+    if [[ -f "$plan_file" ]]; then
+      cross_repo_context="## Cross-Repo Orchestration Plan
+The backend has implemented its side. Implement the frontend side according to this plan:
+
+$(cat "$plan_file")"
+    fi
+
+    # Capture backend PR URL if available
+    local backend_pr_url=""
+    backend_pr_url=$(cd "$BACKEND_REPO" && \
+      gh pr list --head "$ticket_key" --json url -q '.[0].url' 2>/dev/null || true)
+
+    if [[ -n "$backend_pr_url" ]]; then
+      cross_repo_context="$cross_repo_context
+
+## Backend PR
+The backend PR is ready for reference — ensure your frontend changes are compatible:
+$backend_pr_url"
+    fi
+
+    if [[ -n "$cross_repo_context" ]]; then
+      prompt="$prompt
+
+$cross_repo_context"
+    fi
+
+    (cd "$FRONTEND_REPO" && env \
+      TICKET_TITLE="$ticket_title" \
+      TICKET_DESCRIPTION="$ticket_description" \
+      JIRA_BASE_URL="$JIRA_URL" \
+      JIRA_EMAIL="$JIRA_EMAIL" \
+      JIRA_API_TOKEN="$JIRA_API_TOKEN" \
+      REPO_NEEDED="true" \
+      claude -p "$prompt" 2>&1 | tee "$log_file")
+
+    log "Frontend agent complete. Log: $log_file"
+  }
+
+  case "$decision" in
+    backend-only)
+      run_backend
+      ;;
+    frontend-only)
+      run_frontend
+      ;;
+    both)
+      # Sequential: backend first (defines API), then frontend (consumes it)
+      run_backend
+      echo ""
+      log "Backend complete. Starting frontend with backend context..."
+      echo ""
+      run_frontend
+      ;;
+  esac
+
+  echo ""
+  log "All done for $ticket_key."
+  [[ -f "$plan_file" ]] && log "Orchestration plan: $plan_file"
+}
+
+# =============================================================================
+# Main dispatch
+# =============================================================================
+case "${1:-}" in
+  start)
+    shift
+    cmd_start "$@"
+    ;;
+  *)
+    echo ""
+    echo "Usage: jarvis <command> [args]"
+    echo ""
+    echo "Commands:"
+    echo "  start <TICKET_KEY>   Look up ticket, determine repos, and orchestrate implementation"
+    echo ""
+    echo "Examples:"
+    echo "  jarvis start SOX-84649"
+    echo ""
+    exit 1
+    ;;
+esac

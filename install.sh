@@ -24,7 +24,7 @@ echo ""
 # =============================================================================
 echo "── Checking prerequisites ──────────────"
 MISSING=0
-for cmd in git curl jq gh; do
+for cmd in git curl jq gh claude; do
   if command -v "$cmd" &>/dev/null; then
     echo "  ✓ $cmd"
   else
@@ -161,6 +161,36 @@ if [ "$HTTP_CODE" = "200" ]; then
 else
   echo "  ✗ Jira connection failed (HTTP $HTTP_CODE)"
   echo "    Check your JIRA_URL, JIRA_EMAIL, and JIRA_API_TOKEN."
+fi
+echo ""
+
+# =============================================================================
+# Step 6: Add jarvis to PATH
+# =============================================================================
+echo "── Adding jarvis to PATH ───────────────"
+
+SHELL_RC=""
+if [[ "$SHELL" == */zsh ]]; then
+  SHELL_RC="$HOME/.zshrc"
+elif [[ "$SHELL" == */bash ]]; then
+  SHELL_RC="$HOME/.bashrc"
+fi
+
+JARVIS_BIN_LINE="export PATH=\"$JARVIS_DIR/bin:\$PATH\""
+
+if [[ -n "$SHELL_RC" ]]; then
+  if grep -qF "$JARVIS_DIR/bin" "$SHELL_RC" 2>/dev/null; then
+    echo "  ✓ jarvis already in PATH ($SHELL_RC)"
+  else
+    echo "" >> "$SHELL_RC"
+    echo "# Jarvis CLI" >> "$SHELL_RC"
+    echo "$JARVIS_BIN_LINE" >> "$SHELL_RC"
+    echo "  ✓ Added to $SHELL_RC"
+    echo "  Run: source $SHELL_RC  (or open a new terminal)"
+  fi
+else
+  echo "  Could not detect shell config. Add this to your shell profile manually:"
+  echo "  $JARVIS_BIN_LINE"
 fi
 echo ""
 

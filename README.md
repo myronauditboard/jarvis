@@ -49,10 +49,34 @@ After running `./install.sh`, follow these guides in order:
 3. [GitHub Secrets Setup](docs/github-secrets-setup.md) — store credentials securely
 4. [Jira Automation Setup](docs/jira-automation-setup.md) — configure the Jira webhook
 
+## Local CLI — `jarvis start`
+
+After receiving a notification, run:
+
+```bash
+jarvis start SOX-12345
+```
+
+Jarvis will:
+1. Fetch the ticket from Jira
+2. Read indicator files from `auditboard-backend` and `auditboard-frontend`
+3. Ask Claude which repo(s) need changes
+4. If both repos need changes: create an orchestration plan defining the API contract
+5. Run the backend agent (with the plan as context)
+6. Run the frontend agent (with the plan + backend PR URL as context)
+
+Logs are saved to `jarvis/logs/`. Orchestration plans are saved to `jarvis/plans/` (gitignored).
+
 ## Testing
 
 Trigger a test workflow run without touching Jira:
 
+```bash
+./scripts/test.sh              # uses TEST-1 with defaults
+./scripts/test.sh SOX-12345    # uses a real ticket key
+```
+
+Or manually:
 ```bash
 gh api repos/myronauditboard/jarvis/dispatches \
   -f event_type=jira-ticket-assigned \
@@ -69,8 +93,13 @@ Then watch the run: https://github.com/myronauditboard/jarvis/actions
 
 ```
 jarvis/
-  .github/workflows/jira-assigned.yml   # GitHub Actions workflow
-  scripts/notify-slack.sh               # Slack DM sender
+  .github/workflows/jira-assigned.yml   # GitHub Actions workflow (with deduplication)
+  bin/jarvis                            # Local CLI
+  scripts/
+    notify-slack.sh                     # Slack DM sender
+    test.sh                             # Fire a test webhook
   docs/                                 # Setup guides
   install.sh                            # Setup wizard
+  plans/                                # Cross-repo orchestration plans (gitignored)
+  logs/                                 # Agent run logs (gitignored)
 ```

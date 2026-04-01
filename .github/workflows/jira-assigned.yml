@@ -7,6 +7,11 @@ on:
 jobs:
   notify:
     runs-on: ubuntu-latest
+    # Deduplicate: if Jira fires the webhook twice for the same ticket,
+    # cancel the in-flight run and let the latest one win.
+    concurrency:
+      group: notify-${{ github.event.client_payload.ticket_key }}
+      cancel-in-progress: true
 
     steps:
       - uses: actions/checkout@v4
