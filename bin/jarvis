@@ -186,7 +186,8 @@ PROMPT
 IMPORTANT: Do not use MCP or Unblocked for ticket lookup — this is a headless run.
 TICKET_TITLE and TICKET_DESCRIPTION are already set as environment variables.
 Use the Jira REST API (JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN env vars) for
-any Jira updates (status, assignee). Do not prompt for /mcp authentication."
+any Jira updates (status, assignee). Do not prompt for /mcp authentication.
+BRANCH NAME: The branch name MUST be exactly \"$ticket_key\" — no slug, no title, no suffix, no prefix. Nothing else."
 
     if [[ -f "$plan_file" ]]; then
       prompt="$prompt
@@ -204,6 +205,7 @@ $(cat "$plan_file")"
       JIRA_BASE_URL="$JIRA_URL" \
       JIRA_EMAIL="$JIRA_EMAIL" \
       JIRA_API_TOKEN="$JIRA_API_TOKEN" \
+      BRANCH_NAME="$ticket_key" \
       REPO_NEEDED="true" \
       claude -p "$prompt" 2>&1 | tee "$log_file")
 
@@ -221,7 +223,8 @@ $(cat "$plan_file")"
 IMPORTANT: Do not use MCP or Unblocked for ticket lookup — this is a headless run.
 TICKET_TITLE and TICKET_DESCRIPTION are already set as environment variables.
 Use the Jira REST API (JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN env vars) for
-any Jira updates (status, assignee). Do not prompt for /mcp authentication."
+any Jira updates (status, assignee). Do not prompt for /mcp authentication.
+BRANCH NAME: The branch name MUST be exactly \"$ticket_key\" — no slug, no title, no suffix, no prefix. Nothing else."
 
     # Build context: plan + backend PR URL (if backend just ran)
     local cross_repo_context=""
@@ -258,6 +261,7 @@ $cross_repo_context"
       JIRA_BASE_URL="$JIRA_URL" \
       JIRA_EMAIL="$JIRA_EMAIL" \
       JIRA_API_TOKEN="$JIRA_API_TOKEN" \
+      BRANCH_NAME="$ticket_key" \
       REPO_NEEDED="true" \
       claude -p "$prompt" 2>&1 | tee "$log_file")
 
