@@ -114,8 +114,11 @@ both
 PROMPT
 )
 
+  # Try backend repo first (has Unblocked), fall back to frontend repo
   local decision
-  decision=$(claude -p "$decision_prompt" 2>/dev/null | \
+  decision=$((cd "$BACKEND_REPO" && claude -p "$decision_prompt") | \
+    grep -oE 'backend-only|frontend-only|both' | tail -1 || \
+    (cd "$FRONTEND_REPO" && claude -p "$decision_prompt") | \
     grep -oE 'backend-only|frontend-only|both' | tail -1 || echo "")
 
   if [[ -z "$decision" ]]; then
@@ -153,7 +156,20 @@ compatible, coordinated changes.
 PROMPT
 )
 
-    claude -p "$plan_prompt" > "$plan_file" 2>/dev/null
+    # Run in the backend repo (defines the API contract); frontend context
+    # comes through the ticket description and indicator files in the prompt
+    (cd "$BACKEND_REPO" && claude -p "$plan_prompt") > "$plan_file"
+
+    # Also give the frontend repo a chance to augment the plan with its own context
+    local frontend_plan_context
+    frontend_plan_context=$((cd "$FRONTEND_REPO" && claude -p "$(cat <<PROMPT
+Review this cross-repo implementation plan and add any frontend-specific details or corrections.
+Return the full updated plan as markdown.
+
+$(cat "$plan_file")
+PROMPT
+)") || true)
+    [[ -n "$frontend_plan_context" ]] && echo "$frontend_plan_context" > "$plan_file"
     log "Plan saved to $plan_file"
     echo ""
   fi
