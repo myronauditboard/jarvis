@@ -63,8 +63,9 @@ echo "── Jira credentials ────────────────�
 echo "  These are required for 'jarvis start' and will be saved to $JARVISRC."
 echo ""
 
-read -r -p "  JIRA_URL (e.g. https://yourcompany.atlassian.net): " JIRA_URL
-read -r -p "  JIRA_EMAIL (e.g. you@yourcompany.com): " JIRA_EMAIL
+read -r -p "  JIRA_URL [https://auditboard.atlassian.net]: " JIRA_URL
+JIRA_URL="${JIRA_URL:-https://auditboard.atlassian.net}"
+read -r -p "  JIRA_EMAIL (e.g. you@auditboard.com): " JIRA_EMAIL
 read -r -s -p "  JIRA_API_TOKEN (hidden — generate at id.atlassian.net): " JIRA_API_TOKEN
 echo ""
 echo ""
@@ -133,8 +134,12 @@ echo "  GitHub Secrets power the cloud notification workflow."
 echo "  Skip any secret by pressing Enter — you can set them later."
 echo ""
 
-read -r -p "  GitHub repo for Jarvis [myronauditboard/jarvis]: " GH_REPO
-GH_REPO="${GH_REPO:-myronauditboard/jarvis}"
+GH_REPO=$(cd "$JARVIS_DIR" && gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")
+if [[ -z "$GH_REPO" ]]; then
+  echo "  Could not detect GitHub repo. Make sure gh is authenticated and this is a GitHub repo."
+  read -r -p "  Enter repo manually (e.g. myronauditboard/jarvis): " GH_REPO
+fi
+echo "  Repo: $GH_REPO"
 echo ""
 
 # Upload a secret only if a value was provided
