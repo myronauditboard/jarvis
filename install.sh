@@ -113,6 +113,11 @@ set_secret "SLACK_BOT_TOKEN" \
   "See docs/slack-app-setup.md for how to create one" \
   "true"
 
+set_secret "SLACK_USER_ID" \
+  "Your Slack user ID — Jarvis will DM this user" \
+  "Find it in Slack: click your profile → ··· menu → Copy member ID" \
+  "false"
+
 echo "── Email fallback (used when Slack is unavailable) ─"
 echo "  See docs/email-notifications-setup.md for setup details."
 echo ""

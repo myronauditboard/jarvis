@@ -12,11 +12,10 @@
 set -euo pipefail
 
 : "${SLACK_BOT_TOKEN:?SLACK_BOT_TOKEN is required}"
+: "${SLACK_USER_ID:?SLACK_USER_ID is required}"
 : "${TICKET_KEY:?TICKET_KEY is required}"
 : "${TICKET_SUMMARY:?TICKET_SUMMARY is required}"
 : "${TICKET_URL:?TICKET_URL is required}"
-
-SLACK_USER_ID="U07DM3M078R"
 
 # Build the Slack Block Kit payload using jq --arg to safely handle any
 # special characters in the ticket summary (quotes, backslashes, etc.)

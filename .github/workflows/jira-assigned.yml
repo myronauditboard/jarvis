@@ -48,6 +48,7 @@ jobs:
         continue-on-error: true
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_USER_ID: ${{ secrets.SLACK_USER_ID }}
           TICKET_KEY: ${{ github.event.client_payload.ticket_key }}
           TICKET_SUMMARY: ${{ github.event.client_payload.summary }}
           TICKET_URL: ${{ github.event.client_payload.ticket_url }}
