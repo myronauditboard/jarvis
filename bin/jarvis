@@ -209,6 +209,14 @@ $(cat "$plan_file")"
       claude -p "$prompt" 2>&1 | tee "$log_file")
 
     log "Backend agent complete. Log: $log_file"
+
+    local backend_pr_url=""
+    backend_pr_url=$(cd "$BACKEND_REPO" && \
+      gh pr list --head "$ticket_key" --json url -q '.[0].url' 2>/dev/null || true)
+    if [[ -n "$backend_pr_url" ]]; then
+      log "Backend PR: $backend_pr_url"
+      open "$backend_pr_url" 2>/dev/null || true
+    fi
   }
 
   run_frontend() {
@@ -264,6 +272,14 @@ $cross_repo_context"
       claude -p "$prompt" 2>&1 | tee "$log_file")
 
     log "Frontend agent complete. Log: $log_file"
+
+    local frontend_pr_url=""
+    frontend_pr_url=$(cd "$FRONTEND_REPO" && \
+      gh pr list --head "$ticket_key" --json url -q '.[0].url' 2>/dev/null || true)
+    if [[ -n "$frontend_pr_url" ]]; then
+      log "Frontend PR: $frontend_pr_url"
+      open "$frontend_pr_url" 2>/dev/null || true
+    fi
   }
 
   case "$decision" in
