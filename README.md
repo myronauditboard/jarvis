@@ -22,6 +22,19 @@ Everything runs in GitHub's cloud — free, always on.
 - A Slack app with `chat:write` scope installed to your workspace
 - The GitHub CLI (`gh`) installed locally
 
+### SATL Skill Dependencies
+
+`jarvis start` depends on the following files being present in your sibling repos. These are installed by the SATL toolchain — Jarvis will not work without them.
+
+| File | Repo | Purpose |
+|------|------|---------|
+| `.claude/commands/satl-start-jira-work-command-u-myronauditboard.md` | `auditboard-backend` | Orchestrates the full backend implementation workflow |
+| `.claude/commands/satl-start-jira-work-command-u-myronauditboard.md` | `auditboard-frontend` | Orchestrates the full frontend implementation workflow |
+| `.claude/rules/satl-indicators-backend-rule-u-myronauditboard.md` | `auditboard-backend` | Defines what constitutes backend work for a ticket |
+| `.claude/rules/satl-indicators-frontend-rule-u-myronauditboard.md` | `auditboard-frontend` | Defines what constitutes frontend work for a ticket |
+
+If these files are missing, `jarvis start` will warn about missing indicators and may not correctly determine which repos need changes.
+
 ## Quickstart
 
 Clone Jarvis as a sibling of your `auditboard-frontend` and `auditboard-backend` directories:
