@@ -40,11 +40,45 @@ jobs:
             echo "Ticket ${TICKET_KEY} validated. Proceeding with notification."
           fi
 
+      # Try Slack first. continue-on-error so a missing/invalid token
+      # falls through to the email fallback rather than failing the job.
       - name: Send Slack DM
+        id: slack
         if: steps.validate.outputs.count != '0'
+        continue-on-error: true
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           TICKET_KEY: ${{ github.event.client_payload.ticket_key }}
           TICKET_SUMMARY: ${{ github.event.client_payload.summary }}
           TICKET_URL: ${{ github.event.client_payload.ticket_url }}
         run: bash scripts/notify-slack.sh
+
+      # Email fallback: runs when Slack was skipped or failed.
+      - name: Send email notification (fallback)
+        if: steps.validate.outputs.count != '0' && steps.slack.outcome != 'success'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: 587
+          secure: false
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          to: ${{ secrets.NOTIFY_EMAIL }}
+          from: Jarvis <${{ secrets.SMTP_USERNAME }}>
+          subject: "New Jira ticket assigned: ${{ github.event.client_payload.ticket_key }}"
+          body: |
+            New Jira ticket assigned to you:
+
+            Ticket:  ${{ github.event.client_payload.ticket_key }}
+            Summary: ${{ github.event.client_payload.summary }}
+            URL:     ${{ github.event.client_payload.ticket_url }}
+
+            To start work locally, run:
+              jarvis start ${{ github.event.client_payload.ticket_key }}
+          html_body: |
+            <h3>New Jira ticket assigned to you</h3>
+            <table>
+              <tr><td><strong>Ticket</strong></td><td><a href="${{ github.event.client_payload.ticket_url }}">${{ github.event.client_payload.ticket_key }}</a></td></tr>
+              <tr><td><strong>Summary</strong></td><td>${{ github.event.client_payload.summary }}</td></tr>
+            </table>
+            <p>To start work locally, run:<br><code>jarvis start ${{ github.event.client_payload.ticket_key }}</code></p>

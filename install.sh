@@ -109,9 +109,33 @@ set_secret "JIRA_API_TOKEN" \
   "true"
 
 set_secret "SLACK_BOT_TOKEN" \
-  "Your Slack bot token (xoxb-...)" \
+  "Your Slack bot token (xoxb-...) — leave blank to skip, email will be used instead" \
   "See docs/slack-app-setup.md for how to create one" \
   "true"
+
+echo "── Email fallback (used when Slack is unavailable) ─"
+echo "  See docs/email-notifications-setup.md for setup details."
+echo ""
+
+set_secret "SMTP_SERVER" \
+  "SMTP server hostname" \
+  "e.g. smtp.gmail.com" \
+  "false"
+
+set_secret "SMTP_USERNAME" \
+  "SMTP username / sender email address" \
+  "e.g. you@gmail.com" \
+  "false"
+
+set_secret "SMTP_PASSWORD" \
+  "SMTP password or app password" \
+  "For Gmail: generate at https://myaccount.google.com/apppasswords" \
+  "true"
+
+set_secret "NOTIFY_EMAIL" \
+  "Email address to deliver Jarvis notifications to" \
+  "e.g. you@yourcompany.com" \
+  "false"
 
 # =============================================================================
 # Step 5: Validate Jira connectivity

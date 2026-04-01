@@ -10,7 +10,7 @@ When a Jira ticket is assigned to you in **To Do** status, Jarvis sends you a Sl
 Jira assigns a ticket to you
   → Jira Automation fires a webhook to GitHub
     → GitHub Actions validates the ticket via Jira API
-      → Slack DM sent to you with ticket details
+      → Slack DM sent to you (falls back to email if Slack is unavailable)
 ```
 
 Everything runs in GitHub's cloud — free, always on.
@@ -44,9 +44,10 @@ The setup wizard will:
 
 After running `./install.sh`, follow these guides in order:
 
-1. [Slack App Setup](docs/slack-app-setup.md) — create the bot that sends you DMs
-2. [GitHub Secrets Setup](docs/github-secrets-setup.md) — store credentials securely
-3. [Jira Automation Setup](docs/jira-automation-setup.md) — configure the Jira webhook
+1. [Slack App Setup](docs/slack-app-setup.md) — create the bot that sends you DMs *(optional — email is used as fallback)*
+2. [Email Notifications Setup](docs/email-notifications-setup.md) — configure SMTP fallback
+3. [GitHub Secrets Setup](docs/github-secrets-setup.md) — store credentials securely
+4. [Jira Automation Setup](docs/jira-automation-setup.md) — configure the Jira webhook
 
 ## Testing
 
