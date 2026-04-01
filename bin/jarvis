@@ -205,7 +205,6 @@ $(cat "$plan_file")"
       JIRA_BASE_URL="$JIRA_URL" \
       JIRA_EMAIL="$JIRA_EMAIL" \
       JIRA_API_TOKEN="$JIRA_API_TOKEN" \
-      BRANCH_NAME="$ticket_key" \
       REPO_NEEDED="true" \
       claude -p "$prompt" 2>&1 | tee "$log_file")
 
@@ -261,7 +260,6 @@ $cross_repo_context"
       JIRA_BASE_URL="$JIRA_URL" \
       JIRA_EMAIL="$JIRA_EMAIL" \
       JIRA_API_TOKEN="$JIRA_API_TOKEN" \
-      BRANCH_NAME="$ticket_key" \
       REPO_NEEDED="true" \
       claude -p "$prompt" 2>&1 | tee "$log_file")
 
