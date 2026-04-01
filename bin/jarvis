@@ -58,10 +58,10 @@ cmd_start() {
   local ticket_status
   ticket_status=$(echo "$jira_response" | jq -r '.fields.status.name // "Unknown"')
 
-  # Jira description is in Atlassian Document Format (ADF) — extract plain text
+  # Jira description is in Atlassian Document Format (ADF) — recursively extract all text nodes
   local ticket_description
   ticket_description=$(echo "$jira_response" | \
-    jq -r '[.fields.description.content[]?.content[]?.text // empty] | join(" ")' 2>/dev/null || echo "")
+    jq -r '[.. | objects | select(.type == "text") | .text] | join(" ")' 2>/dev/null || echo "")
 
   local ticket_url="$JIRA_URL/browse/$ticket_key"
 
@@ -181,7 +181,12 @@ PROMPT
     ts=$(date +"%Y%m%d_%H%M%S")
     local log_file="$LOG_DIR/${ts}_${ticket_key}_backend.log"
 
-    local prompt="/$COMMAND_FILE $ticket_key"
+    local prompt="/$COMMAND_FILE $ticket_key
+
+IMPORTANT: Do not use MCP or Unblocked for ticket lookup — this is a headless run.
+TICKET_TITLE and TICKET_DESCRIPTION are already set as environment variables.
+Use the Jira REST API (JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN env vars) for
+any Jira updates (status, assignee). Do not prompt for /mcp authentication."
 
     if [[ -f "$plan_file" ]]; then
       prompt="$prompt
@@ -211,7 +216,12 @@ $(cat "$plan_file")"
     ts=$(date +"%Y%m%d_%H%M%S")
     local log_file="$LOG_DIR/${ts}_${ticket_key}_frontend.log"
 
-    local prompt="/$COMMAND_FILE $ticket_key"
+    local prompt="/$COMMAND_FILE $ticket_key
+
+IMPORTANT: Do not use MCP or Unblocked for ticket lookup — this is a headless run.
+TICKET_TITLE and TICKET_DESCRIPTION are already set as environment variables.
+Use the Jira REST API (JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN env vars) for
+any Jira updates (status, assignee). Do not prompt for /mcp authentication."
 
     # Build context: plan + backend PR URL (if backend just ran)
     local cross_repo_context=""
