@@ -13,6 +13,9 @@
 
 set -euo pipefail
 
+# Surface errors with context instead of dying silently
+trap 'echo "[jarvis] FATAL: command failed at line $LINENO (exit code $?)" >&2' ERR
+
 JARVIS_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PARENT_DIR="$(dirname "$JARVIS_DIR")"
 BACKEND_REPO="$PARENT_DIR/auditboard-backend"
@@ -36,6 +39,32 @@ log()  { echo "[jarvis] $1"; }
 warn() { echo "[jarvis] WARNING: $1" >&2; }
 die()  { echo "[jarvis] ERROR: $1" >&2; exit 1; }
 
+# Write structured header to a log file so it's never empty
+write_log_header() {
+  local log_file="$1" ticket_key="$2" ticket_title="$3" repo="$4" decision="$5"
+  local claude_version
+  claude_version=$(claude --version 2>/dev/null || echo "unknown")
+  cat >> "$log_file" <<EOF
+=== jarvis agent log ===
+timestamp: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+host:      $(hostname)
+ticket:    $ticket_key
+title:     $ticket_title
+repo:      $repo
+decision:  $decision
+claude:    $claude_version
+============================
+
+EOF
+}
+
+# Log to both stdout and the current log file
+logf() {
+  local log_file="$1"; shift
+  log "$1"
+  echo "[jarvis] $1" >> "$log_file"
+}
+
 # =============================================================================
 # jarvis start <TICKET_KEY>
 # =============================================================================
@@ -46,14 +75,20 @@ cmd_start() {
   # ── Step 1: Fetch ticket from Jira ──────────────────────────────────────────
   log "Fetching $ticket_key from Jira..."
 
-  local jira_response
-  jira_response=$(curl -s \
+  local jira_raw http_code jira_response
+  jira_raw=$(curl -s -w "\n%{http_code}" \
     -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
     "$JIRA_URL/rest/api/3/issue/$ticket_key?fields=summary,description,status,assignee,priority")
+  http_code=$(echo "$jira_raw" | tail -1)
+  jira_response=$(echo "$jira_raw" | sed '$d')
+
+  if [[ "$http_code" != "200" ]]; then
+    die "Jira API returned HTTP $http_code for $ticket_key. Response: ${jira_response:0:200}"
+  fi
 
   local ticket_title
   ticket_title=$(echo "$jira_response" | jq -r '.fields.summary // empty')
-  [[ -z "$ticket_title" ]] && die "Could not fetch $ticket_key. Check your Jira credentials and ticket ID."
+  [[ -z "$ticket_title" ]] && die "Could not parse summary from Jira response for $ticket_key."
 
   local ticket_status
   ticket_status=$(echo "$jira_response" | jq -r '.fields.status.name // "Unknown"')
@@ -62,6 +97,7 @@ cmd_start() {
   local ticket_description
   ticket_description=$(echo "$jira_response" | \
     jq -r '[.. | objects | select(.type == "text") | .text] | join(" ")' 2>/dev/null || echo "")
+  [[ -z "$ticket_description" ]] && warn "Ticket description is empty — agent will have limited context."
 
   local ticket_url="$JIRA_URL/browse/$ticket_key"
 
@@ -115,14 +151,22 @@ PROMPT
 )
 
   # Try backend repo first (has Unblocked), fall back to frontend repo
-  local decision
-  decision=$((cd "$BACKEND_REPO" && claude -p "$decision_prompt") | \
-    grep -oE 'backend-only|frontend-only|both' | tail -1 || \
-    (cd "$FRONTEND_REPO" && claude -p "$decision_prompt") | \
-    grep -oE 'backend-only|frontend-only|both' | tail -1 || echo "")
+  local decision="" raw_output="" exit_code=0
 
+  raw_output=$(cd "$BACKEND_REPO" && claude -p "$decision_prompt" 2>&1) || exit_code=$?
+  if [[ $exit_code -ne 0 ]]; then
+    warn "Decision call failed in backend repo (exit $exit_code): ${raw_output:0:200}"
+    exit_code=0
+    raw_output=$(cd "$FRONTEND_REPO" && claude -p "$decision_prompt" 2>&1) || exit_code=$?
+    if [[ $exit_code -ne 0 ]]; then
+      warn "Decision call also failed in frontend repo (exit $exit_code): ${raw_output:0:200}"
+    fi
+  fi
+
+  decision=$(echo "$raw_output" | grep -oE 'backend-only|frontend-only|both' | tail -1 || true)
   if [[ -z "$decision" ]]; then
-    warn "Could not determine repos from ticket analysis. Defaulting to 'both'."
+    warn "Could not extract decision from output. Raw: ${raw_output:0:200}"
+    warn "Defaulting to 'both'."
     decision="both"
   fi
 
@@ -158,18 +202,31 @@ PROMPT
 
     # Run in the backend repo (defines the API contract); frontend context
     # comes through the ticket description and indicator files in the prompt
-    (cd "$BACKEND_REPO" && claude -p "$plan_prompt") > "$plan_file"
+    local plan_output="" plan_exit=0
+    plan_output=$(cd "$BACKEND_REPO" && claude -p "$plan_prompt" 2>&1) || plan_exit=$?
+    if [[ $plan_exit -ne 0 ]]; then
+      warn "Plan generation failed in backend repo (exit $plan_exit): ${plan_output:0:200}"
+      die "Cannot proceed with cross-repo work without a plan."
+    fi
+    echo "$plan_output" > "$plan_file"
+    log "Plan generated ($(wc -c < "$plan_file" | tr -d ' ') bytes)."
 
     # Also give the frontend repo a chance to augment the plan with its own context
-    local frontend_plan_context
-    frontend_plan_context=$((cd "$FRONTEND_REPO" && claude -p "$(cat <<PROMPT
+    local frontend_plan_context="" augment_exit=0
+    frontend_plan_context=$(cd "$FRONTEND_REPO" && claude -p "$(cat <<PROMPT
 Review this cross-repo implementation plan and add any frontend-specific details or corrections.
 Return the full updated plan as markdown.
 
 $(cat "$plan_file")
 PROMPT
-)") || true)
-    [[ -n "$frontend_plan_context" ]] && echo "$frontend_plan_context" > "$plan_file"
+)" 2>&1) || augment_exit=$?
+    if [[ $augment_exit -ne 0 ]]; then
+      warn "Frontend plan augmentation failed (exit $augment_exit): ${frontend_plan_context:0:200}"
+      warn "Proceeding with backend-generated plan only."
+    elif [[ -n "$frontend_plan_context" ]]; then
+      echo "$frontend_plan_context" > "$plan_file"
+      log "Plan augmented by frontend context ($(wc -c < "$plan_file" | tr -d ' ') bytes)."
+    fi
     log "Plan saved to $plan_file"
     echo ""
   fi
@@ -199,6 +256,10 @@ Implement the backend side according to this plan:
 $(cat "$plan_file")"
     fi
 
+    write_log_header "$log_file" "$ticket_key" "$ticket_title" "backend" "$decision"
+
+    local exit_code=0 start_time
+    start_time=$(date +%s)
     (cd "$BACKEND_REPO" && env \
       TICKET_TITLE="$ticket_title" \
       TICKET_DESCRIPTION="$ticket_description" \
@@ -206,16 +267,28 @@ $(cat "$plan_file")"
       JIRA_EMAIL="$JIRA_EMAIL" \
       JIRA_API_TOKEN="$JIRA_API_TOKEN" \
       REPO_NEEDED="true" \
-      claude -p "$prompt" 2>&1 | tee "$log_file")
+      claude -p "$prompt" 2>&1 | tee -a "$log_file") || exit_code=$?
 
-    log "Backend agent complete. Log: $log_file"
+    local duration=$(( $(date +%s) - start_time ))
+    logf "$log_file" "Backend agent finished in ${duration}s (exit code $exit_code)."
+
+    if [[ $exit_code -ne 0 ]]; then
+      warn "Backend agent failed. Log: $log_file"
+      if [[ $duration -lt 5 ]]; then
+        warn "Exited in <5s — likely a startup failure (auth prompt? CLI error?)."
+      fi
+      warn "Try running directly:  cd $BACKEND_REPO && claude -p '/$COMMAND_FILE $ticket_key'"
+      return $exit_code
+    fi
 
     local backend_pr_url=""
     backend_pr_url=$(cd "$BACKEND_REPO" && \
-      gh pr list --head "$ticket_key" --json url -q '.[0].url' 2>/dev/null || true)
-    if [[ -n "$backend_pr_url" ]]; then
+      gh pr list --head "$ticket_key" --json url -q '.[0].url' 2>&1 || true)
+    if [[ -n "$backend_pr_url" && "$backend_pr_url" == http* ]]; then
       log "Backend PR: $backend_pr_url"
-      open "$backend_pr_url" 2>/dev/null || true
+      open "$backend_pr_url" 2>/dev/null || warn "Could not open browser for $backend_pr_url"
+    else
+      warn "No backend PR found for branch $ticket_key."
     fi
   }
 
@@ -262,6 +335,10 @@ $backend_pr_url"
 $cross_repo_context"
     fi
 
+    write_log_header "$log_file" "$ticket_key" "$ticket_title" "frontend" "$decision"
+
+    local exit_code=0 start_time
+    start_time=$(date +%s)
     (cd "$FRONTEND_REPO" && env \
       TICKET_TITLE="$ticket_title" \
       TICKET_DESCRIPTION="$ticket_description" \
@@ -269,16 +346,28 @@ $cross_repo_context"
       JIRA_EMAIL="$JIRA_EMAIL" \
       JIRA_API_TOKEN="$JIRA_API_TOKEN" \
       REPO_NEEDED="true" \
-      claude -p "$prompt" 2>&1 | tee "$log_file")
+      claude -p "$prompt" 2>&1 | tee -a "$log_file") || exit_code=$?
 
-    log "Frontend agent complete. Log: $log_file"
+    local duration=$(( $(date +%s) - start_time ))
+    logf "$log_file" "Frontend agent finished in ${duration}s (exit code $exit_code)."
+
+    if [[ $exit_code -ne 0 ]]; then
+      warn "Frontend agent failed. Log: $log_file"
+      if [[ $duration -lt 5 ]]; then
+        warn "Exited in <5s — likely a startup failure (auth prompt? CLI error?)."
+      fi
+      warn "Try running directly:  cd $FRONTEND_REPO && claude -p '/$COMMAND_FILE $ticket_key'"
+      return $exit_code
+    fi
 
     local frontend_pr_url=""
     frontend_pr_url=$(cd "$FRONTEND_REPO" && \
-      gh pr list --head "$ticket_key" --json url -q '.[0].url' 2>/dev/null || true)
-    if [[ -n "$frontend_pr_url" ]]; then
+      gh pr list --head "$ticket_key" --json url -q '.[0].url' 2>&1 || true)
+    if [[ -n "$frontend_pr_url" && "$frontend_pr_url" == http* ]]; then
       log "Frontend PR: $frontend_pr_url"
-      open "$frontend_pr_url" 2>/dev/null || true
+      open "$frontend_pr_url" 2>/dev/null || warn "Could not open browser for $frontend_pr_url"
+    else
+      warn "No frontend PR found for branch $ticket_key."
     fi
   }
 
