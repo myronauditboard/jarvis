@@ -27,6 +27,12 @@ BACKEND_INDICATORS="$BACKEND_REPO/.claude/rules/satl-indicators-backend-rule-u-m
 FRONTEND_INDICATORS="$FRONTEND_REPO/.claude/rules/satl-indicators-frontend-rule-u-myronauditboard.md"
 COMMAND_FILE="satl-start-jira-work-command-u-myronauditboard"
 
+# Block the Atlassian MCP in headless runs. The agent uses the Jira REST API
+# (via JIRA_* env vars) instead. Without this, claude -p may attempt the
+# Atlassian MCP OAuth flow, which hangs or fails with no output because
+# headless mode cannot present the auth prompt.
+DISALLOWED_TOOLS="mcp__claude_ai_Auditboard_Atlassian_MCP"
+
 # Load credentials from ~/.jarvisrc if present
 [[ -f "$HOME/.jarvisrc" ]] && source "$HOME/.jarvisrc"
 
@@ -153,11 +159,11 @@ PROMPT
   # Try backend repo first (has Unblocked), fall back to frontend repo
   local decision="" raw_output="" exit_code=0
 
-  raw_output=$(cd "$BACKEND_REPO" && claude -p "$decision_prompt" 2>&1) || exit_code=$?
+  raw_output=$(cd "$BACKEND_REPO" && claude -p --disallowed-tools "$DISALLOWED_TOOLS" "$decision_prompt" 2>&1) || exit_code=$?
   if [[ $exit_code -ne 0 ]]; then
     warn "Decision call failed in backend repo (exit $exit_code): ${raw_output:0:200}"
     exit_code=0
-    raw_output=$(cd "$FRONTEND_REPO" && claude -p "$decision_prompt" 2>&1) || exit_code=$?
+    raw_output=$(cd "$FRONTEND_REPO" && claude -p --disallowed-tools "$DISALLOWED_TOOLS" "$decision_prompt" 2>&1) || exit_code=$?
     if [[ $exit_code -ne 0 ]]; then
       warn "Decision call also failed in frontend repo (exit $exit_code): ${raw_output:0:200}"
     fi
@@ -203,7 +209,7 @@ PROMPT
     # Run in the backend repo (defines the API contract); frontend context
     # comes through the ticket description and indicator files in the prompt
     local plan_output="" plan_exit=0
-    plan_output=$(cd "$BACKEND_REPO" && claude -p "$plan_prompt" 2>&1) || plan_exit=$?
+    plan_output=$(cd "$BACKEND_REPO" && claude -p --disallowed-tools "$DISALLOWED_TOOLS" "$plan_prompt" 2>&1) || plan_exit=$?
     if [[ $plan_exit -ne 0 ]]; then
       warn "Plan generation failed in backend repo (exit $plan_exit): ${plan_output:0:200}"
       die "Cannot proceed with cross-repo work without a plan."
@@ -213,7 +219,7 @@ PROMPT
 
     # Also give the frontend repo a chance to augment the plan with its own context
     local frontend_plan_context="" augment_exit=0
-    frontend_plan_context=$(cd "$FRONTEND_REPO" && claude -p "$(cat <<PROMPT
+    frontend_plan_context=$(cd "$FRONTEND_REPO" && claude -p --disallowed-tools "$DISALLOWED_TOOLS" "$(cat <<PROMPT
 Review this cross-repo implementation plan and add any frontend-specific details or corrections.
 Return the full updated plan as markdown.
 
@@ -267,7 +273,7 @@ $(cat "$plan_file")"
       JIRA_EMAIL="$JIRA_EMAIL" \
       JIRA_API_TOKEN="$JIRA_API_TOKEN" \
       REPO_NEEDED="true" \
-      claude -p "$prompt" 2>&1 | tee -a "$log_file") || exit_code=$?
+      claude -p --disallowed-tools "$DISALLOWED_TOOLS" "$prompt" 2>&1 | tee -a "$log_file") || exit_code=$?
 
     local duration=$(( $(date +%s) - start_time ))
     logf "$log_file" "Backend agent finished in ${duration}s (exit code $exit_code)."
@@ -346,7 +352,7 @@ $cross_repo_context"
       JIRA_EMAIL="$JIRA_EMAIL" \
       JIRA_API_TOKEN="$JIRA_API_TOKEN" \
       REPO_NEEDED="true" \
-      claude -p "$prompt" 2>&1 | tee -a "$log_file") || exit_code=$?
+      claude -p --disallowed-tools "$DISALLOWED_TOOLS" "$prompt" 2>&1 | tee -a "$log_file") || exit_code=$?
 
     local duration=$(( $(date +%s) - start_time ))
     logf "$log_file" "Frontend agent finished in ${duration}s (exit code $exit_code)."
