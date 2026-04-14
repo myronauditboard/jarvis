@@ -188,7 +188,7 @@ PROMPT
     local plan_prompt
     plan_prompt=$(cat <<PROMPT
 You are creating a cross-repo implementation plan for a Jira ticket that requires
-changes in both the backend (Node.js/TypeScript) and frontend (Vue.js) repositories.
+changes in both the backend (Node.js/TypeScript) and frontend (Ember.js) repositories.
 
 ## Ticket
 Key: $ticket_key
