@@ -61,29 +61,6 @@ else
 fi
 echo ""
 
-# =============================================================================
-# Optionally delete GitHub Secrets
-# =============================================================================
-GH_REPO=$(cd "$JARVIS_DIR" && gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")
-
-if [[ -n "$GH_REPO" ]]; then
-  echo "── GitHub Secrets (optional) ───────────"
-  echo "  Repo: $GH_REPO"
-  echo ""
-  read -r -p "  Delete Jarvis GitHub Secrets from this repo? [y/N] " del_secrets
-  if [[ "$del_secrets" == "y" || "$del_secrets" == "Y" ]]; then
-    for secret in JIRA_URL JIRA_EMAIL JIRA_API_TOKEN SLACK_BOT_TOKEN SLACK_USER_ID \
-                  SMTP_SERVER SMTP_USERNAME SMTP_PASSWORD NOTIFY_EMAIL; do
-      gh secret delete "$secret" --repo "$GH_REPO" 2>/dev/null \
-        && echo "  ✓ Deleted $secret" \
-        || echo "  — $secret not set (skipped)"
-    done
-  else
-    echo "  — Skipped (secrets left in place)"
-  fi
-  echo ""
-fi
-
 echo "╔══════════════════════════════════════╗"
 echo "║       Uninstall Complete             ║"
 echo "╚══════════════════════════════════════╝"
